@@ -1,0 +1,44 @@
+# Компилированные бинарные файлы
+compressor
+test_*
+*.o
+*.a
+
+# Каталоги сборки, если есть
+/build/
+out/
+bin/
+
+# CUDA промежуточные файлы
+*.cu.c
+*.cu.cpp
+*.cubin
+*.ptx
+*.linkinfo
+
+# Бэкапы, временные файлы
+*~
+*.swp
+*.tmp
+
+# Файлы данных (сгенерированные)
+data/output.bin
+data/restored.txt
+
+# Логи, дампы, профилировка
+*.log
+*.trace
+*.nvvp
+
+# VS Code
+.vscode/
+
+# CMake (на всякий случай, если используешь в будущем)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Python (если появятся скрипты или графики)
+__pycache__/
+*.pyc
