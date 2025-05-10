@@ -1,1 +1,1 @@
-# compression-lab
+# compression-lib
