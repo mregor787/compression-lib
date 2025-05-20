@@ -4,10 +4,8 @@ test_*
 *.o
 *.a
 
-# Каталоги сборки, если есть
-/build/
-out/
-bin/
+# Исключение для папки с тестами
+!tests/* 
 
 # CUDA промежуточные файлы
 *.cu.c
@@ -32,13 +30,3 @@ data/restored.txt
 
 # VS Code
 .vscode/
-
-# CMake (на всякий случай, если используешь в будущем)
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-
-# Python (если появятся скрипты или графики)
-__pycache__/
-*.pyc

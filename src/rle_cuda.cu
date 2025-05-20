@@ -1,58 +1,32 @@
+#include <thrust/device_vector.h>
+#include <thrust/copy.h>
+#include <thrust/scan.h>
+#include <thrust/execution_policy.h>
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include "../include/rle.h"
 
-__global__ void prefix_sum(const int *input, int *output, int n, bool exclusive) {
-    __shared__ int temp[1024];
-    int tid = threadIdx.x;
-
-    temp[tid] = (tid < n) ? input[tid] : 0;
-    __syncthreads();
-
-    for (int offset = 1; offset < n; offset *= 2) {
-        int t = temp[tid];
-        if (tid >= offset)
-            t += temp[tid - offset];
-        __syncthreads();
-        temp[tid] = t;
-        __syncthreads();
-    }
-
-    if (tid < n) {
-        if (exclusive)
-            output[tid] = (tid == 0) ? 0 : temp[tid - 1];
-        else
-            output[tid] = temp[tid];
-    }
-}
-
 __global__ void mark_series(const uint8_t *input, int *flags, size_t n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-
-    if (i == 0 || input[i] != input[i - 1])
-        flags[i] = 1;
-    else
-        flags[i] = 0;
+    flags[i] = (i == 0 || input[i] != input[i - 1]) ? 1 : 0;
 }
 
 __global__ void write_compressed(const uint8_t *input, size_t n,
-                          const int *flags, const int *positions,
-                          uint8_t *output) {
+                                 const int *flags, const int *positions,
+                                 uint8_t *output) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
+    if (i >= n || flags[i] == 0) return;
 
-    if (flags[i] == 1) {
-        int start = i;
-        uint8_t byte = input[i];
-        int len = 1;
-        while (start + len < n && input[start + len] == byte)
-            len++;
+    int start = i;
+    uint8_t byte = input[i];
+    int len = 1;
+    while (start + len < n && input[start + len] == byte)
+        len++;
 
-        int out_pos = positions[i] * 2;
-        output[out_pos] = byte;
-        output[out_pos + 1] = (uint8_t)(len);
-    }
+    int out_pos = positions[i] * 2;
+    output[out_pos]     = byte;
+    output[out_pos + 1] = (uint8_t)(len);
 }
 
 __global__ void write_decompressed(const uint8_t *input,
@@ -62,10 +36,10 @@ __global__ void write_decompressed(const uint8_t *input,
     if (i >= num_pairs) return;
 
     uint8_t value = input[2 * i];
-    int count = input[2 * i + 1];
+    uint8_t count = input[2 * i + 1];
     int start = positions[i];
 
-    for (int j = 0; j < count; ++j) {
+    for (uint8_t j = 0; j < count; ++j) {
         output[start + j] = value;
     }
 }
@@ -75,39 +49,35 @@ int rle_compress_cuda(const uint8_t *input, size_t input_size,
     if (!input || !output || !output_size || input_size == 0)
         return -1;
 
-    uint8_t *d_input, *d_output;
-    int *d_flags, *d_positions;
-    size_t max_output_size = input_size * 2;
-
-    cudaMalloc((void**)&d_input, input_size);
-    cudaMalloc((void**)&d_output, max_output_size);
-    cudaMalloc((void**)&d_flags, input_size * sizeof(int));
-    cudaMalloc((void**)&d_positions, input_size * sizeof(int));
-    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
+    thrust::device_vector<uint8_t> d_input(input, input + input_size);
+    thrust::device_vector<int> d_flags(input_size);
+    thrust::device_vector<int> d_positions(input_size);
 
     int threads = 256;
     int blocks = (input_size + threads - 1) / threads;
-
-    mark_series<<<blocks, threads>>>(d_input, d_flags, input_size);
+    mark_series<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
+                                     thrust::raw_pointer_cast(d_flags.data()),
+                                     input_size);
     cudaDeviceSynchronize();
 
-    prefix_sum<<<1, 1024>>>(d_flags, d_positions, input_size, false);
+    thrust::exclusive_scan(thrust::device, d_flags.begin(), d_flags.end(), d_positions.begin());
+
+    int last_flag = 0, last_pos = 0;
+    cudaMemcpy(&last_flag, thrust::raw_pointer_cast(d_flags.data() + input_size - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&last_pos, thrust::raw_pointer_cast(d_positions.data() + input_size - 1), sizeof(int), cudaMemcpyDeviceToHost);
+    int num_series = last_flag ? last_pos + 1 : last_pos;
+
+    thrust::device_vector<uint8_t> d_output(num_series * 2);
+
+    write_compressed<<<blocks, threads>>>(thrust::raw_pointer_cast(d_input.data()),
+                                          input_size,
+                                          thrust::raw_pointer_cast(d_flags.data()),
+                                          thrust::raw_pointer_cast(d_positions.data()),
+                                          thrust::raw_pointer_cast(d_output.data()));
     cudaDeviceSynchronize();
 
-    write_compressed<<<blocks, threads>>>(d_input, input_size, d_flags, d_positions, d_output);
-    cudaDeviceSynchronize();
-
-    int last_pos = 0;
-    cudaMemcpy(&last_pos, &d_positions[input_size - 1], sizeof(int), cudaMemcpyDeviceToHost);
-    int num_series = last_pos + 1;
-
-    cudaMemcpy(output, d_output, num_series * 2, cudaMemcpyDeviceToHost);
+    cudaMemcpy(output, thrust::raw_pointer_cast(d_output.data()), num_series * 2, cudaMemcpyDeviceToHost);
     *output_size = num_series * 2;
-
-    cudaFree(d_input);
-    cudaFree(d_output);
-    cudaFree(d_flags);
-    cudaFree(d_positions);
 
     return 0;
 }
@@ -119,43 +89,34 @@ int rle_decompress_cuda(const uint8_t *input, size_t input_size,
 
     int num_pairs = input_size / 2;
 
-    uint8_t *d_input, *d_output;
-    int *d_counts, *d_positions;
+    thrust::device_vector<uint8_t> d_input(input, input + input_size);
+    thrust::device_vector<int> d_counts(num_pairs);
 
-    cudaMalloc((void**)&d_input, input_size);
-    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
-    cudaMalloc((void**)&d_counts, num_pairs * sizeof(int));
-    cudaMalloc((void**)&d_positions, num_pairs * sizeof(int));
-
-    // Извлекаем длины серий
-    int *h_counts = (int*)malloc(num_pairs * sizeof(int));
     for (int i = 0; i < num_pairs; ++i)
-        h_counts[i] = input[2 * i + 1];
-    cudaMemcpy(d_counts, h_counts, num_pairs * sizeof(int), cudaMemcpyHostToDevice);
-    free(h_counts);
+        d_counts[i] = input[i * 2 + 1];
 
-    // Префикс-сумма по длинам
-    prefix_sum<<<1, 1024>>>(d_counts, d_positions, num_pairs, true);
-    cudaDeviceSynchronize();
+    thrust::device_vector<int> d_positions(num_pairs);
+    thrust::exclusive_scan(thrust::device, d_counts.begin(), d_counts.end(), d_positions.begin());
 
-    int last_pos = 0, last_len = input[input_size - 1];
-    cudaMemcpy(&last_pos, &d_positions[num_pairs - 1], sizeof(int), cudaMemcpyDeviceToHost);
-    *output_size = last_pos + last_len;
+    int total_output_size = 0;
+    cudaMemcpy(&total_output_size, thrust::raw_pointer_cast(d_positions.data() + num_pairs - 1),
+               sizeof(int), cudaMemcpyDeviceToHost);
+    total_output_size += input[input_size - 1];
 
-    cudaMalloc((void**)&d_output, *output_size);
+    thrust::device_vector<uint8_t> d_output(total_output_size);
 
     int threads = 256;
     int blocks = (num_pairs + threads - 1) / threads;
-
-    write_decompressed<<<blocks, threads>>>(d_input, d_positions, d_output, num_pairs);
+    write_decompressed<<<blocks, threads>>>(
+        thrust::raw_pointer_cast(d_input.data()),
+        thrust::raw_pointer_cast(d_positions.data()),
+        thrust::raw_pointer_cast(d_output.data()),
+        num_pairs
+    );
     cudaDeviceSynchronize();
 
-    cudaMemcpy(output, d_output, *output_size, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_input);
-    cudaFree(d_output);
-    cudaFree(d_counts);
-    cudaFree(d_positions);
+    cudaMemcpy(output, thrust::raw_pointer_cast(d_output.data()), total_output_size, cudaMemcpyDeviceToHost);
+    *output_size = total_output_size;
 
     return 0;
 }

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <sys/time.h>
 #include "../include/compression.h"
 
 #define MAX_FILE_SIZE (10 * 1024 * 1024) // 10 MB
@@ -14,8 +16,9 @@ void print_help(const char *prog) {
     printf("  --mode <type>        Execution mode [cpu | cuda] (default: cpu)\n");
     printf("  --compress           Perform compression (default if --decompress is not specified)\n");
     printf("  --decompress         Perform decompression (overrides --compress)\n");
-    printf("  --input <filename>   Input file (auto: test.txt or output.bin)\n");
-    printf("  --output <filename>  Output file (auto: output.bin or restored.txt)\n");
+    printf("  --input <filename>   Input file (default: test.txt or output.bin)\n");
+    printf("  --output <filename>  Output file (default: output.bin or restored.txt)\n");
+    printf("  --benchmark          Measure time for compress + decompress, ignore other mode flags\n");
     printf("  --help               Show this help message\n\n");
     printf("Examples:\n");
     printf("  %s --algo rle --compress --input data/a.txt --output a.rle\n", prog);
@@ -53,15 +56,17 @@ int write_file(const char *filename, const uint8_t *buffer, size_t size) {
     return 0;
 }
 
+double time_diff_seconds(struct timeval start, struct timeval end) {
+    return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1e6;
+}
+
 int main(int argc, char **argv) {
-    // Значения по умолчанию
     const char *algo_str = "rle";
     const char *mode_str = "cpu";
     const char *input_file = NULL;
     const char *output_file = NULL;
-    int compress = 1, decompress = 0;
+    int compress = 1, decompress = 0, benchmark = 0;
 
-    // Разбор аргументов
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
             print_help(argv[0]);
@@ -79,10 +84,11 @@ int main(int argc, char **argv) {
             input_file = argv[++i];
         } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
             output_file = argv[++i];
+        } else if (strcmp(argv[i], "--benchmark") == 0) {
+            benchmark = 1;
         }
     }
 
-    // Подстановка input/output по умолчанию
     if (!input_file) {
         input_file = decompress ? "data/output.bin" : "data/test.txt";
     }
@@ -103,10 +109,11 @@ int main(int argc, char **argv) {
     ExecutionMode mode = (ExecutionMode)mode_val;
 
     uint8_t *input = malloc(MAX_FILE_SIZE);
-    uint8_t *output = malloc(MAX_FILE_SIZE);
-    size_t input_size = 0, output_size = 0;
+    uint8_t *compressed = malloc(MAX_FILE_SIZE * 2);
+    uint8_t *decompressed = malloc(MAX_FILE_SIZE);
+    size_t input_size = 0, compressed_size = 0, decompressed_size = 0;
 
-    if (!input || !output) {
+    if (!input || !compressed || !decompressed) {
         fprintf(stderr, "Memory allocation failed.\n");
         return 1;
     }
@@ -116,25 +123,66 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    struct timeval t1, t2;
+    double compress_time = 0.0, decompress_time = 0.0;
     int result = 0;
+
+    if (benchmark) {
+        gettimeofday(&t1, NULL);
+        result = compress_data(input, input_size, compressed, &compressed_size, algo, mode);
+        gettimeofday(&t2, NULL);
+        compress_time = time_diff_seconds(t1, t2);
+
+        if (result != 0) {
+            fprintf(stderr, "Compression failed (code %d).\n", result);
+            return 1;
+        }
+
+        gettimeofday(&t1, NULL);
+        result = decompress_data(compressed, compressed_size, decompressed, &decompressed_size, algo, mode);
+        gettimeofday(&t2, NULL);
+        decompress_time = time_diff_seconds(t1, t2);
+
+        if (result != 0) {
+            fprintf(stderr, "Decompression failed (code %d).\n", result);
+            return 1;
+        }
+
+        int ok = decompressed_size == input_size &&
+                 memcmp(input, decompressed, input_size) == 0;
+
+        printf("[Benchmark Report]\n");
+        printf("Algorithm:          %s\n", algo_str);
+        printf("Mode:               %s\n", mode_str);
+        printf("Input size:         %zu bytes\n", input_size);
+        printf("Compressed size:    %zu bytes\n", compressed_size);
+        printf("Decompressed size:  %zu bytes\n", decompressed_size);
+        printf("Compression time:   %.6f s\n", compress_time);
+        printf("Decompression time: %.6f s\n", decompress_time);
+        printf("Correctness:        %s\n", ok ? "OK" : "FAILED");
+
+        return ok ? 0 : 1;
+    }
+
     if (compress)
-        result = compress_data(input, input_size, output, &output_size, algo, mode);
+        result = compress_data(input, input_size, compressed, &compressed_size, algo, mode);
     else
-        result = decompress_data(input, input_size, output, &output_size, algo, mode);
+        result = decompress_data(input, input_size, compressed, &compressed_size, algo, mode);
 
     if (result != 0) {
         fprintf(stderr, "Compression/decompression failed (code %d).\n", result);
         return 1;
     }
 
-    if (write_file(output_file, output, output_size) != 0) {
+    if (write_file(output_file, compressed, compressed_size) != 0) {
         fprintf(stderr, "Failed to write output file: %s\n", output_file);
         return 1;
     }
 
-    printf("Done. Output written to %s (%zu bytes)\n", output_file, output_size);
+    printf("Done. Output written to %s (%zu bytes)\n", output_file, compressed_size);
 
     free(input);
-    free(output);
+    free(compressed);
+    free(decompressed);
     return 0;
 }
