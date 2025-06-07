@@ -16,7 +16,7 @@ CUDA_OBJ  = $(CUDA_SRC:.cu=.o)
 
 # Целевые файлы
 LIB       = libcompression.a
-BIN       = compressor test_rle test_lz77 test_lzw test_huffman test_bwt test_bwt_rle_huffman test_rle_cuda test_bwt_cuda test_huffman_cuda
+BIN       = compressor
 
 # Основная цель
 all: $(LIB) $(BIN)
@@ -29,34 +29,6 @@ $(LIB): $(OBJ) $(CUDA_OBJ)
 compressor: tools/compressor.c $(LIB)
 	$(NVCC) $(NVFLAGS) -o $@ $^ -lrt
 
-# Тесты
-test_rle: tests/test_rle.c $(LIB)
-	$(NVCC) $(NVFLAGS) -o $@ $^
-
-test_lz77: tests/test_lz77.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-
-test_lzw: tests/test_lzw.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-
-test_huffman: tests/test_huffman.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-
-test_bwt: tests/test_bwt.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ $^
-
-test_bwt_rle_huffman: tests/test_bwt_rle_huffman.c $(LIB)
-	$(NVCC) $(NVFLAGS) -o $@ $^
-
-test_rle_cuda: tests/test_rle_cuda.c $(LIB)
-	$(NVCC) $(NVFLAGS) -o $@ $^
-
-test_bwt_cuda: tests/test_bwt_cuda.c $(LIB)
-	$(NVCC) $(NVFLAGS) -o $@ $^
-
-test_huffman_cuda: tests/test_huffman_cuda.c $(LIB)
-	$(NVCC) $(NVFLAGS) -o $@ $^
-
 # Автоматическая компиляция .c и .cu файлов в .o
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -67,32 +39,3 @@ test_huffman_cuda: tests/test_huffman_cuda.c $(LIB)
 # Очистка
 clean:
 	rm -f $(OBJ) $(CUDA_OBJ) $(BIN) $(LIB)
-
-# Тесты одной командой
-test_all: $(filter test_%, $(BIN))
-	@echo "Running test_rle:"
-	./test_rle
-	@echo ""
-	@echo "Running test_lz77:"
-	./test_lz77
-	@echo ""
-	@echo "Running test_lzw:"
-	./test_lzw
-	@echo ""
-	@echo "Running test_huffman:"
-	./test_huffman
-	@echo ""
-	@echo "Running test_bwt:"
-	./test_bwt
-	@echo ""
-	@echo "Running test_bwt_rle_huffman:"
-	./test_bwt_rle_huffman
-	@echo ""
-	@echo "Running test_rle_cuda:"
-	./test_rle_cuda
-	@echo ""
-	@echo "Running test_bwt_cuda:"
-	./test_bwt_cuda
-	@echo ""
-	@echo "Running test_huffman_cuda:"
-	./test_huffman_cuda

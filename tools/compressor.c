@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
-#include <sys/time.h>
-#include "../include/compression.h"
+#include <sys/stat.h>
+#include <time.h>
+#include <ctype.h>
 
-#define MAX_FILE_SIZE (10 * 1024 * 1024) // 10 MB
+#include "../include/compression.h"
 
 void print_help(const char *prog) {
     printf("Compression Utility\n\n");
@@ -40,24 +40,62 @@ int parse_mode(const char *str) {
     return -1;
 }
 
-int read_file(const char *filename, uint8_t *buffer, size_t *size) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) return -1;
-    *size = fread(buffer, 1, MAX_FILE_SIZE, f);
-    fclose(f);
-    return 0;
+size_t get_file_size(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        fprintf(stderr, "Cannot stat file: %s\n", path);
+        return 0;
+    }
+    return (size_t)st.st_size;
 }
 
-int write_file(const char *filename, const uint8_t *buffer, size_t size) {
-    FILE *f = fopen(filename, "wb");
-    if (!f) return -1;
-    fwrite(buffer, 1, size, f);
-    fclose(f);
-    return 0;
+int files_are_equal(const char* path1, const char* path2) {
+    FILE* f1 = fopen(path1, "rb");
+    FILE* f2 = fopen(path2, "rb");
+    if (!f1 || !f2) {
+        if (f1) fclose(f1);
+        if (f2) fclose(f2);
+        return 0;
+    }
+
+    fseek(f1, 0, SEEK_END);
+    fseek(f2, 0, SEEK_END);
+    size_t size1 = ftell(f1);
+    size_t size2 = ftell(f2);
+    if (size1 != size2) {
+        fclose(f1);
+        fclose(f2);
+        return 0;
+    }
+    rewind(f1);
+    rewind(f2);
+
+    int equal = 1;
+    for (size_t i = 0; i < size1; ++i) {
+        int c1 = fgetc(f1);
+        int c2 = fgetc(f2);
+        if (c1 != c2) {
+            equal = 0;
+            break;
+        }
+    }
+
+    fclose(f1);
+    fclose(f2);
+    return equal;
 }
 
-double time_diff_seconds(struct timeval start, struct timeval end) {
-    return (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1e6;
+void print_report_header(const char* algo_str)
+{
+    char upper[64];
+    size_t i = 0;
+
+    for (; algo_str[i] && i < sizeof(upper) - 1; ++i)
+        upper[i] = toupper((unsigned char)algo_str[i]);
+
+    upper[i] = '\0';
+
+    printf("\n=== %s Compression Report ===\n", upper);
 }
 
 int main(int argc, char **argv) {
@@ -108,81 +146,33 @@ int main(int argc, char **argv) {
     CompressionAlgo algo = (CompressionAlgo)algo_val;
     ExecutionMode mode = (ExecutionMode)mode_val;
 
-    uint8_t *input = malloc(MAX_FILE_SIZE);
-    uint8_t *compressed = malloc(MAX_FILE_SIZE * 2);
-    uint8_t *decompressed = malloc(MAX_FILE_SIZE);
-    size_t input_size = 0, compressed_size = 0, decompressed_size = 0;
-
-    if (!input || !compressed || !decompressed) {
-        fprintf(stderr, "Memory allocation failed.\n");
-        return 1;
-    }
-
-    if (read_file(input_file, input, &input_size) != 0) {
-        fprintf(stderr, "Failed to read input file: %s\n", input_file);
-        return 1;
-    }
-
-    struct timeval t1, t2;
-    double compress_time = 0.0, decompress_time = 0.0;
-    int result = 0;
-
     if (benchmark) {
-        gettimeofday(&t1, NULL);
-        result = compress_data(input, input_size, compressed, &compressed_size, algo, mode);
-        gettimeofday(&t2, NULL);
-        compress_time = time_diff_seconds(t1, t2);
+        const char* input = "data/test.txt";
+        const char* output = "data/output.bin";
+        const char* restored = "data/restored.txt";
 
-        if (result != 0) {
-            fprintf(stderr, "Compression failed (code %d).\n", result);
-            return 1;
-        }
+        compress_data(input, output, algo, mode);
+        decompress_data(output, restored, algo, mode);
 
-        gettimeofday(&t1, NULL);
-        result = decompress_data(compressed, compressed_size, decompressed, &decompressed_size, algo, mode);
-        gettimeofday(&t2, NULL);
-        decompress_time = time_diff_seconds(t1, t2);
+        size_t original_size = get_file_size(input);
+        size_t compressed_size = get_file_size(output);
+        size_t restored_size = get_file_size(restored);
 
-        if (result != 0) {
-            fprintf(stderr, "Decompression failed (code %d).\n", result);
-            return 1;
-        }
+        int match = files_are_equal(input, restored);
 
-        int ok = decompressed_size == input_size &&
-                 memcmp(input, decompressed, input_size) == 0;
-
-        printf("[Benchmark Report]\n");
-        printf("Algorithm:          %s\n", algo_str);
-        printf("Mode:               %s\n", mode_str);
-        printf("Input size:         %zu bytes\n", input_size);
-        printf("Compressed size:    %zu bytes\n", compressed_size);
-        printf("Decompressed size:  %zu bytes\n", decompressed_size);
-        printf("Compression time:   %.6f s\n", compress_time);
-        printf("Decompression time: %.6f s\n", decompress_time);
-        printf("Correctness:        %s\n", ok ? "OK" : "FAILED");
-
-        return ok ? 0 : 1;
+        print_report_header(algo_str);
+        printf("Original file:    %s (%zu bytes)\n", input, original_size);
+        printf("Compressed file:  %s (%zu bytes)\n", output, compressed_size);
+        printf("Restored file:    %s (%zu bytes)\n", restored, restored_size);
+        printf("Compression ratio: %.2fx\n", compressed_size ? (double)original_size / compressed_size : 0.0);
+        printf("Restored file matches original: %s\n", match ? "YES" : "NO");
+        return 0;
     }
 
     if (compress)
-        result = compress_data(input, input_size, compressed, &compressed_size, algo, mode);
+        compress_data(input_file, output_file, algo, mode);
     else
-        result = decompress_data(input, input_size, compressed, &compressed_size, algo, mode);
+        decompress_data(input_file, output_file, algo, mode);
 
-    if (result != 0) {
-        fprintf(stderr, "Compression/decompression failed (code %d).\n", result);
-        return 1;
-    }
-
-    if (write_file(output_file, compressed, compressed_size) != 0) {
-        fprintf(stderr, "Failed to write output file: %s\n", output_file);
-        return 1;
-    }
-
-    printf("Done. Output written to %s (%zu bytes)\n", output_file, compressed_size);
-
-    free(input);
-    free(compressed);
-    free(decompressed);
     return 0;
 }

@@ -6,7 +6,7 @@
 #include <string.h>
 
 #define MAX_SIZE (10 * 1024 * 1024)
-
+/*
 int compress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
                               uint8_t *output, size_t *output_size,
                               ExecutionMode mode) {
@@ -117,3 +117,4 @@ int decompress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
     free(rle_out);
     return res;
 }
+*/

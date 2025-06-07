@@ -17,12 +17,10 @@ typedef enum {
     MODE_CUDA
 } ExecutionMode;
 
-int compress_data(const uint8_t *input, size_t input_size,
-                  uint8_t *output, size_t *output_size,
+int compress_data(const char* input_file, const char* output_file,
                   CompressionAlgo algo, ExecutionMode mode);
 
-int decompress_data(const uint8_t *input, size_t input_size,
-                    uint8_t *output, size_t *output_size,
+int decompress_data(const char* input_file, const char* output_file,
                     CompressionAlgo algo, ExecutionMode mode);
 
 #endif // COMPRESSION_H

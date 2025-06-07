@@ -1,26 +1,25 @@
 #ifndef RLE_H
 #define RLE_H
 
+#include <stdio.h>
 #include <stdint.h>
-#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // CPU
-int rle_compress_cpu(const uint8_t *input, size_t input_size,
-                     uint8_t *output, size_t *output_size);
+void rle_compress_cpu(const char* input_file, const char* output_file);
 
-int rle_decompress_cpu(const uint8_t *input, size_t input_size,
-                       uint8_t *output, size_t *output_size);
+void rle_decompress_cpu(const char* input_file, const char* output_file);
 
 // CUDA
-int rle_compress_cuda(const uint8_t *input, size_t input_size,
-                      uint8_t *output, size_t *output_size);
+void rle_compress_cuda(const char* input_file, const char* output_file);
 
-int rle_decompress_cuda(const uint8_t *input, size_t input_size,
-                        uint8_t *output, size_t *output_size);
+void rle_decompress_cuda(const char* input_file, const char* output_file);
 
 #ifdef __cplusplus
 }

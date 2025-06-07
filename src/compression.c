@@ -6,78 +6,78 @@
 #include "huffman.h"
 #include "bwt_rle_huffman.h"
 
-int compress_data(const uint8_t *input, size_t input_size,
-                  uint8_t *output, size_t *output_size,
-                  CompressionAlgo algo, ExecutionMode mode) {
-    if (!input || !output || !output_size) return -1;
+int compress_data(const char* input_file, const char* output_file,
+                  CompressionAlgo algo, ExecutionMode mode) 
+{
+    if (!input_file || !output_file) return -1;
 
     switch (algo) {
         case ALGO_RLE:
             if (mode == MODE_CPU)
-                return rle_compress_cpu(input, input_size, output, output_size);
+                rle_compress_cpu(input_file, output_file);
             else if (mode == MODE_CUDA)
-                return rle_compress_cuda(input, input_size, output, output_size);
+                rle_compress_cuda(input_file, output_file);
             break;
-        
+/*        
         case ALGO_LZ77:
             if (mode == MODE_CPU)
-                return lz77_compress_cpu(input, input_size, output, output_size);
+                lz77_compress_cpu(input_file, output_file);
             break;
 
         case ALGO_LZW:
             if (mode == MODE_CPU)
-                return lzw_compress_cpu(input, input_size, output, output_size);
+                lzw_compress_cpu(input_file, output_file);
             break;
         
         case ALGO_HUFFMAN:
             if (mode == MODE_CPU)
-                return huffman_compress_cpu(input, input_size, output, output_size);
+                huffman_compress_cpu(input_file, output_file);
             else if (mode == MODE_CUDA)
-                return huffman_compress_cuda(input, input_size, output, output_size);
+                huffman_compress_cuda(input_file, output_file);
             break;
         
         case ALGO_BWT_RLE_HUFFMAN:
-            return compress_bwt_rle_huffman(input, input_size, output, output_size, mode);
-
+            compress_bwt_rle_huffman(input_file, output_file, mode);
+*/
         default:
             return -2; // неподдерживаемый алгоритм
     }
     return -3; // неподдерживаемый режим
 }
 
-int decompress_data(const uint8_t *input, size_t input_size,
-                    uint8_t *output, size_t *output_size,
-                    CompressionAlgo algo, ExecutionMode mode) {
-    if (!input || !output || !output_size) return -1;
+int decompress_data(const char* input_file, const char* output_file,
+                    CompressionAlgo algo, ExecutionMode mode) 
+{
+    if (!input_file || !output_file) return -1;
 
     switch (algo) {
         case ALGO_RLE:
             if (mode == MODE_CPU)
-                return rle_decompress_cpu(input, input_size, output, output_size);
+                rle_decompress_cpu(input_file, output_file);
             else if (mode == MODE_CUDA)
-                return rle_decompress_cuda(input, input_size, output, output_size);
+                rle_decompress_cuda(input_file, output_file);
             break;
-        
+/*
         case ALGO_LZ77:
             if (mode == MODE_CPU)
-                return lz77_decompress_cpu(input, input_size, output, output_size);
+                lz77_decompress_cpu(input_file, output_file);
             break;
     
         case ALGO_LZW:
             if (mode == MODE_CPU)
-                return lzw_decompress_cpu(input, input_size, output, output_size);
+                lzw_decompress_cpu(input_file, output_file);
             break;
 
         case ALGO_HUFFMAN:
             if (mode == MODE_CPU)
-                return huffman_decompress_cpu(input, input_size, output, output_size);
+                huffman_decompress_cpu(input_file, output_file);
             else if (mode == MODE_CUDA)
-                return huffman_decompress_cpu(input, input_size, output, output_size);
+                huffman_decompress_cpu(input_file, output_file);
             break;
         
         case ALGO_BWT_RLE_HUFFMAN:
-            return decompress_bwt_rle_huffman(input, input_size, output, output_size, mode);
-
+            decompress_bwt_rle_huffman(input_file, output_file, mode);
+*/
         default:
             return -2;
     }
