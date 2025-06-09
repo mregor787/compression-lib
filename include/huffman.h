@@ -1,26 +1,43 @@
 #ifndef HUFFMAN_H
 #define HUFFMAN_H
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+#include <time.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// CPU
-int huffman_compress_cpu(const uint8_t *input, size_t input_size,
-                         uint8_t *output, size_t *output_size);
+#define BYTE_RANGE 256
 
-int huffman_decompress_cpu(const uint8_t *input, size_t input_size,
-                           uint8_t *output, size_t *output_size);
+typedef struct Node {
+    int byte;
+    uint32_t freq;
+    struct Node *left, *right;
+} Node;
+
+typedef struct {
+    uint64_t bits;
+    int length;
+} HuffCode;
+
+typedef struct {
+    Node **data;
+    int size;
+} MinHeap;
+
+// CPU
+void huffman_compress_cpu(const char* input_file, const char* output_file);
+
+void huffman_decompress_cpu(const char* input_file, const char* output_file);
 
 // CUDA
-int huffman_compress_cuda(const uint8_t *input, size_t input_size,
-                          uint8_t *output, size_t *output_size);
+void huffman_compress_cuda(const char* input_file, const char* output_file);
 
-// Только для внутреннего использования (подсчёт частот на GPU)
-int count_frequencies_cuda(const uint8_t *input, size_t input_size, int *freq_out);
 
 #ifdef __cplusplus
 }

@@ -1,193 +1,157 @@
-#include <cuda_runtime.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-#include "huffman.h"
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/sort.h>
+#include <thrust/reduce.h>
+#include <thrust/pair.h>
+#include <thrust/functional.h>
+#include <huffman.h>
 
-// ---------- GPU-часть ----------
-
-__global__ void count_kernel(const uint8_t *input, size_t size, int *freq) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
-        atomicAdd(&freq[input[i]], 1);
-    }
+static Node* new_node(int byte, uint32_t freq, Node* left, Node* right) {
+    Node* n = (Node*)malloc(sizeof(Node));
+    n->byte = byte;
+    n->freq = freq;
+    n->left = left;
+    n->right = right;
+    return n;
 }
 
-int count_frequencies_cuda(const uint8_t *input, size_t input_size, int *freq_out) {
-    if (!input || !freq_out || input_size == 0)
-        return -1;
-
-    uint8_t *d_input;
-    int *d_freq;
-
-    cudaMalloc((void**)&d_input, input_size);
-    cudaMalloc((void**)&d_freq, 256 * sizeof(int));
-    cudaMemcpy(d_input, input, input_size, cudaMemcpyHostToDevice);
-    cudaMemset(d_freq, 0, 256 * sizeof(int));
-
-    int threads = 256;
-    int blocks = (input_size + threads - 1) / threads;
-    count_kernel<<<blocks, threads>>>(d_input, input_size, d_freq);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(freq_out, d_freq, 256 * sizeof(int), cudaMemcpyDeviceToHost);
-
-    cudaFree(d_input);
-    cudaFree(d_freq);
-
-    return 0;
-}
-
-// ---------- CPU-часть (reuse из huffman_cpu.c) ----------
-
-typedef struct HuffmanNode {
-    uint8_t value;
-    uint32_t freq;
-    struct HuffmanNode *left;
-    struct HuffmanNode *right;
-} HuffmanNode;
-
-typedef struct {
-    HuffmanNode *nodes[512];
-    int size;
-} MinHeap;
-
-static void heap_push(MinHeap *heap, HuffmanNode *node) {
-    int i = heap->size++;
-    while (i > 0 && heap->nodes[(i - 1) / 2]->freq > node->freq) {
-        heap->nodes[i] = heap->nodes[(i - 1) / 2];
+static void heap_insert(MinHeap *h, Node *n) {
+    int i = h->size++;
+    while (i && n->freq < h->data[(i - 1) / 2]->freq) {
+        h->data[i] = h->data[(i - 1) / 2];
         i = (i - 1) / 2;
     }
-    heap->nodes[i] = node;
+    h->data[i] = n;
 }
 
-static HuffmanNode *heap_pop(MinHeap *heap) {
-    HuffmanNode *res = heap->nodes[0];
-    HuffmanNode *last = heap->nodes[--heap->size];
+static Node* heap_extract(MinHeap *h) {
+    Node* min = h->data[0];
+    Node* last = h->data[--h->size];
     int i = 0;
-    while (i * 2 + 1 < heap->size) {
-        int child = i * 2 + 1;
-        if (child + 1 < heap->size &&
-            heap->nodes[child + 1]->freq < heap->nodes[child]->freq)
-            child++;
-        if (last->freq <= heap->nodes[child]->freq)
+    while ((2 * i + 1) < h->size) {
+        int smallest = 2 * i + 1;
+        if (smallest + 1 < h->size && h->data[smallest + 1]->freq < h->data[smallest]->freq)
+            smallest++;
+        if (last->freq <= h->data[smallest]->freq)
             break;
-        heap->nodes[i] = heap->nodes[child];
-        i = child;
+        h->data[i] = h->data[smallest];
+        i = smallest;
     }
-    heap->nodes[i] = last;
-    return res;
+    h->data[i] = last;
+    return min;
 }
 
-static HuffmanNode *build_huffman_tree(uint32_t freq[256]) {
-    MinHeap heap = { .size = 0 };
-    for (int i = 0; i < 256; ++i) {
-        if (freq[i]) {
-            HuffmanNode *node = (HuffmanNode *)malloc(sizeof(HuffmanNode));
-            node->value = (uint8_t)i;
-            node->freq = freq[i];
-            node->left = node->right = NULL;
-            heap_push(&heap, node);
-        }
+static void build_codes(Node* root, HuffCode* table, uint64_t code, int depth) {
+    if (!root->left && !root->right) {
+        table[root->byte].bits = code;
+        table[root->byte].length = depth;
+        return;
+    }
+    if (root->left) build_codes(root->left, table, (code << 1), depth + 1);
+    if (root->right) build_codes(root->right, table, (code << 1) | 1, depth + 1);
+}
+
+static void free_tree(Node* root) {
+    if (!root) return;
+    free_tree(root->left);
+    free_tree(root->right);
+    free(root);
+}
+
+void compute_frequencies_gpu(const unsigned char* input, size_t size, uint32_t* freq_out) {
+    thrust::device_vector<unsigned char> d_input(input, input + size);
+
+    thrust::sort(d_input.begin(), d_input.end());
+
+    thrust::device_vector<unsigned char> d_keys(BYTE_RANGE);
+    thrust::device_vector<uint32_t> d_counts(BYTE_RANGE);
+
+    auto end = thrust::reduce_by_key(
+        d_input.begin(), d_input.end(), 
+        thrust::make_constant_iterator(1),  
+        d_keys.begin(), 
+        d_counts.begin() 
+    );
+
+    size_t n = end.first - d_keys.begin();
+
+    thrust::host_vector<uint32_t> h_freq(BYTE_RANGE, 0);
+
+    thrust::host_vector<unsigned char> h_keys(d_keys.begin(), d_keys.begin() + n);
+    thrust::host_vector<uint32_t> h_counts(d_counts.begin(), d_counts.begin() + n);
+
+    for (size_t i = 0; i < n; i++) {
+        h_freq[h_keys[i]] = h_counts[i];
+    }
+
+    memcpy(freq_out, h_freq.data(), BYTE_RANGE * sizeof(uint32_t));
+}
+
+void huffman_compress_cuda(const char* input_file, const char* output_file) {
+    FILE* in = fopen(input_file, "rb");
+    if (!in) { perror("fopen"); return; }
+
+    fseek(in, 0, SEEK_END);
+    long input_size = ftell(in);
+    fseek(in, 0, SEEK_SET);
+
+    unsigned char* input = (unsigned char*)malloc(input_size);
+    fread(input, 1, input_size, in);
+    fclose(in);
+
+    clock_t start = clock();
+
+    uint32_t freq[BYTE_RANGE] = {0};
+    compute_frequencies_gpu(input, input_size, freq);
+
+    clock_t mid = clock();
+    printf("%s Huffman GPU Freq Count time: %.2f ms\n", input_file, 1000.0 * (mid - start) / CLOCKS_PER_SEC);
+
+    MinHeap heap = { .data = (Node**)malloc(BYTE_RANGE * sizeof(Node*)), .size = 0 };
+    for (int i = 0; i < BYTE_RANGE; i++) {
+        if (freq[i]) heap_insert(&heap, new_node(i, freq[i], NULL, NULL));
     }
 
     while (heap.size > 1) {
-        HuffmanNode *a = heap_pop(&heap);
-        HuffmanNode *b = heap_pop(&heap);
-        HuffmanNode *parent = (HuffmanNode *)malloc(sizeof(HuffmanNode));
-        parent->value = 0;
-        parent->freq = a->freq + b->freq;
-        parent->left = a;
-        parent->right = b;
-        heap_push(&heap, parent);
+        Node* l = heap_extract(&heap);
+        Node* r = heap_extract(&heap);
+        heap_insert(&heap, new_node(-1, l->freq + r->freq, l, r));
     }
 
-    return heap.size > 0 ? heap.nodes[0] : NULL;
-}
+    Node* root = heap_extract(&heap);
+    HuffCode table[BYTE_RANGE] = {0};
+    build_codes(root, table, 0, 0);
 
-typedef struct {
-    uint32_t bits;
-    uint8_t length;
-} HuffmanCode;
+    FILE* out = fopen(output_file, "wb");
+    if (!out) { perror("fopen"); return; }
 
-static void build_code_table(HuffmanNode *node,
-                             HuffmanCode table[256],
-                             uint32_t code, uint8_t length) {
-    if (!node->left && !node->right) {
-        table[node->value].bits = code;
-        table[node->value].length = length;
-        return;
-    }
+    fwrite(freq, sizeof(uint32_t), BYTE_RANGE, out);
+    fwrite(&input_size, sizeof(uint32_t), 1, out);
 
-    if (node->left)
-        build_code_table(node->left, table, (code << 1), length + 1);
-    if (node->right)
-        build_code_table(node->right, table, (code << 1) | 1, length + 1);
-}
-
-static void free_tree(HuffmanNode *node) {
-    if (!node) return;
-    free_tree(node->left);
-    free_tree(node->right);
-    free(node);
-}
-
-int huffman_compress_cuda(const uint8_t *input, size_t input_size,
-                          uint8_t *output, size_t *output_size) {
-    if (!input || !output || !output_size || input_size == 0)
-        return -1;
-
-    // 1. Подсчёт частот на GPU
-    int freq_temp[256] = {0};
-    if (count_frequencies_cuda(input, input_size, freq_temp) != 0)
-        return -2;
-
-    uint32_t freq[256];
-    for (int i = 0; i < 256; ++i)
-        freq[i] = (uint32_t)freq_temp[i];
-
-    // 2. Построение дерева и таблицы кодов
-    HuffmanNode *root = build_huffman_tree(freq);
-    if (!root) return -3;
-
-    HuffmanCode table[256] = {0};
-    build_code_table(root, table, 0, 0);
-
-    // 3. Сохраняем таблицу частот
-    memcpy(output, freq, 256 * sizeof(uint32_t));
-    size_t byte_pos = 256 * sizeof(uint32_t);
-    uint8_t bit_buffer = 0;
+    uint8_t buffer = 0;
     int bit_count = 0;
-
-    // 4. Запись битов
-    for (size_t i = 0; i < input_size; ++i) {
-        HuffmanCode code = table[input[i]];
-        for (int j = code.length - 1; j >= 0; --j) {
-            bit_buffer <<= 1;
-            bit_buffer |= (code.bits >> j) & 1;
+    for (long i = 0; i < input_size; i++) {
+        HuffCode code = table[input[i]];
+        for (int b = code.length - 1; b >= 0; b--) {
+            buffer <<= 1;
+            buffer |= (code.bits >> b) & 1;
             bit_count++;
-
             if (bit_count == 8) {
-                output[byte_pos++] = bit_buffer;
-                bit_buffer = 0;
+                fwrite(&buffer, 1, 1, out);
+                buffer = 0;
                 bit_count = 0;
             }
         }
     }
-
     if (bit_count > 0) {
-        bit_buffer <<= (8 - bit_count);
-        output[byte_pos++] = bit_buffer;
+        buffer <<= (8 - bit_count);
+        fwrite(&buffer, 1, 1, out);
     }
 
-    // 5. Добавим размер исходных данных
-    output[byte_pos++] = (uint8_t)(input_size & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 8) & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 16) & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 24) & 0xFF);
+    clock_t end = clock();
+    printf("%s Huffman GPU compress time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
 
-    *output_size = byte_pos;
     free_tree(root);
-    return 0;
+    fclose(out);
+    free(input);
 }

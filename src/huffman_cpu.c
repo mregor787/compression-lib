@@ -1,201 +1,172 @@
-#include "huffman.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
+#include <huffman.h>
 
-#include <stdio.h>
+static Node* new_node(int byte, uint32_t freq, Node* left, Node* right) {
+    Node* n = (Node*)malloc(sizeof(Node));
+    n->byte = byte;
+    n->freq = freq;
+    n->left = left;
+    n->right = right;
+    return n;
+}
 
-#define MAX_NODES 512
-
-typedef struct HuffmanNode {
-    uint8_t value;
-    uint32_t freq;
-    struct HuffmanNode *left;
-    struct HuffmanNode *right;
-} HuffmanNode;
-
-typedef struct {
-    HuffmanNode *nodes[MAX_NODES];
-    int size;
-} MinHeap;
-
-static void heap_push(MinHeap *heap, HuffmanNode *node) {
-    int i = heap->size++;
-    while (i > 0 && heap->nodes[(i - 1) / 2]->freq > node->freq) {
-        heap->nodes[i] = heap->nodes[(i - 1) / 2];
+static void heap_insert(MinHeap *h, Node *n) {
+    int i = h->size++;
+    while (i && n->freq < h->data[(i - 1) / 2]->freq) {
+        h->data[i] = h->data[(i - 1) / 2];
         i = (i - 1) / 2;
     }
-    heap->nodes[i] = node;
+    h->data[i] = n;
 }
 
-static HuffmanNode *heap_pop(MinHeap *heap) {
-    HuffmanNode *res = heap->nodes[0];
-    HuffmanNode *last = heap->nodes[--heap->size];
-
+static Node* heap_extract(MinHeap *h) {
+    Node* min = h->data[0];
+    Node* last = h->data[--h->size];
     int i = 0;
-    while (i * 2 + 1 < heap->size) {
-        int child = i * 2 + 1;
-        if (child + 1 < heap->size &&
-            heap->nodes[child + 1]->freq < heap->nodes[child]->freq)
-            child++;
-        if (last->freq <= heap->nodes[child]->freq)
+    while ((2 * i + 1) < h->size) {
+        int smallest = 2 * i + 1;
+        if (smallest + 1 < h->size && h->data[smallest + 1]->freq < h->data[smallest]->freq)
+            smallest++;
+        if (last->freq <= h->data[smallest]->freq)
             break;
-        heap->nodes[i] = heap->nodes[child];
-        i = child;
+        h->data[i] = h->data[smallest];
+        i = smallest;
     }
-    heap->nodes[i] = last;
-    return res;
+    h->data[i] = last;
+    return min;
 }
 
-static HuffmanNode *build_huffman_tree(uint32_t freq[256]) {
-    MinHeap heap = { .size = 0 };
-    for (int i = 0; i < 256; ++i) {
-        if (freq[i]) {
-            HuffmanNode *node = malloc(sizeof(HuffmanNode));
-            node->value = (uint8_t)i;
-            node->freq = freq[i];
-            node->left = node->right = NULL;
-            heap_push(&heap, node);
-        }
+static void build_codes(Node* root, HuffCode* table, uint64_t code, int depth) {
+    if (!root->left && !root->right) {
+        table[root->byte].bits = code;
+        table[root->byte].length = depth;
+        return;
+    }
+    if (root->left) build_codes(root->left, table, (code << 1), depth + 1);
+    if (root->right) build_codes(root->right, table, (code << 1) | 1, depth + 1);
+}
+
+static void free_tree(Node* root) {
+    if (!root) return;
+    free_tree(root->left);
+    free_tree(root->right);
+    free(root);
+}
+
+void huffman_compress_cpu(const char* input_file, const char* output_file) {
+    FILE* in = fopen(input_file, "rb");
+    if (!in) { perror("fopen"); return; }
+    fseek(in, 0, SEEK_END);
+    long input_size = ftell(in);
+    fseek(in, 0, SEEK_SET);
+
+    unsigned char* input = (unsigned char*)malloc(input_size);
+    fread(input, 1, input_size, in);
+    fclose(in);
+
+    clock_t start = clock();
+
+    uint32_t freq[BYTE_RANGE] = {0};
+    for (long i = 0; i < input_size; i++) {
+        freq[input[i]]++;
+    }
+
+    MinHeap heap = { .data = (Node**)malloc(BYTE_RANGE * sizeof(Node*)), .size = 0 };
+    for (int i = 0; i < BYTE_RANGE; i++) {
+        if (freq[i]) heap_insert(&heap, new_node(i, freq[i], NULL, NULL));
     }
 
     while (heap.size > 1) {
-        HuffmanNode *a = heap_pop(&heap);
-        HuffmanNode *b = heap_pop(&heap);
-
-        HuffmanNode *parent = malloc(sizeof(HuffmanNode));
-        parent->value = 0;
-        parent->freq = a->freq + b->freq;
-        parent->left = a;
-        parent->right = b;
-
-        heap_push(&heap, parent);
+        Node* l = heap_extract(&heap);
+        Node* r = heap_extract(&heap);
+        heap_insert(&heap, new_node(-1, l->freq + r->freq, l, r));
     }
 
-    return heap.size > 0 ? heap.nodes[0] : NULL;
-}
+    Node* root = heap_extract(&heap);
+    HuffCode table[BYTE_RANGE] = {0};
+    build_codes(root, table, 0, 0);
 
-typedef struct {
-    uint32_t bits;
-    uint8_t length;
-} HuffmanCode;
+    FILE* out = fopen(output_file, "wb");
+    if (!out) { perror("fopen"); return; }
 
-static void build_code_table(HuffmanNode *node,
-                             HuffmanCode table[256],
-                             uint32_t code, uint8_t length) {
-    if (!node->left && !node->right) {
-        table[node->value].bits = code;
-        table[node->value].length = length;
-        return;
-    }
+    fwrite(freq, sizeof(uint32_t), BYTE_RANGE, out);
+    fwrite(&input_size, sizeof(uint32_t), 1, out);
 
-    if (node->left)
-        build_code_table(node->left, table, (code << 1), length + 1);
-    if (node->right)
-        build_code_table(node->right, table, (code << 1) | 1, length + 1);
-}
-
-static void free_tree(HuffmanNode *node) {
-    if (!node) return;
-    free_tree(node->left);
-    free_tree(node->right);
-    free(node);
-}
-
-int huffman_compress_cpu(const uint8_t *input, size_t input_size,
-                         uint8_t *output, size_t *output_size) {
-    if (!input || !output || !output_size) return -1;
-
-    uint32_t freq[256] = {0};
-    for (size_t i = 0; i < input_size; ++i)
-        freq[input[i]]++;
-
-    HuffmanNode *root = build_huffman_tree(freq);
-    if (!root) return -2;
-
-    HuffmanCode table[256] = {0};
-    build_code_table(root, table, 0, 0);
-
-    // 1. Сохраняем таблицу частот (1024 байта)
-    memcpy(output, freq, 256 * sizeof(uint32_t));
-    size_t byte_pos = 256 * sizeof(uint32_t);
-    uint8_t bit_buffer = 0;
+    uint8_t buffer = 0;
     int bit_count = 0;
-
-    // 2. Кодируем поток
-    for (size_t i = 0; i < input_size; ++i) {
-        HuffmanCode code = table[input[i]];
-        for (int j = code.length - 1; j >= 0; --j) {
-            bit_buffer <<= 1;
-            bit_buffer |= (code.bits >> j) & 1;
+    for (long i = 0; i < input_size; i++) {
+        HuffCode code = table[input[i]];
+        for (int b = code.length - 1; b >= 0; b--) {
+            buffer <<= 1;
+            buffer |= (code.bits >> b) & 1;
             bit_count++;
-
             if (bit_count == 8) {
-                output[byte_pos++] = bit_buffer;
-                bit_buffer = 0;
+                fwrite(&buffer, 1, 1, out);
+                buffer = 0;
                 bit_count = 0;
             }
         }
     }
-
-    // если остались биты
     if (bit_count > 0) {
-        bit_buffer <<= (8 - bit_count);
-        output[byte_pos++] = bit_buffer;
+        buffer <<= (8 - bit_count);
+        fwrite(&buffer, 1, 1, out);
     }
 
-    // 3. Добавим размер исходных данных в конец (4 байта)
-    output[byte_pos++] = (uint8_t)(input_size & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 8) & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 16) & 0xFF);
-    output[byte_pos++] = (uint8_t)((input_size >> 24) & 0xFF);
+    clock_t end = clock();
+    printf("%s Huffman CPU compress time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
 
-    *output_size = byte_pos;
     free_tree(root);
-    return 0;
+
+    fclose(out);
+    free(input);
 }
 
-int huffman_decompress_cpu(const uint8_t *input, size_t input_size,
-                           uint8_t *output, size_t *output_size) {
-    if (!input || !output || !output_size || input_size < 1028)
-        return -1;
+void huffman_decompress_cpu(const char* input_file, const char* output_file) {
+    FILE* in = fopen(input_file, "rb");
+    if (!in) { perror("fopen"); return; }
 
-    // 1. Восстановим таблицу частот
-    uint32_t freq[256];
-    memcpy(freq, input, 256 * sizeof(uint32_t));
+    uint32_t freq[BYTE_RANGE];
+    fread(freq, sizeof(uint32_t), BYTE_RANGE, in);
 
-    // 2. Восстановим размер оригинала
-    uint32_t original_size = 0;
-    size_t length_pos = input_size - 4;
-    original_size |= input[length_pos];
-    original_size |= ((uint32_t)input[length_pos + 1]) << 8;
-    original_size |= ((uint32_t)input[length_pos + 2]) << 16;
-    original_size |= ((uint32_t)input[length_pos + 3]) << 24;
+    uint32_t original_size;
+    fread(&original_size, sizeof(uint32_t), 1, in);
 
-    HuffmanNode *root = build_huffman_tree(freq);
-    if (!root) return -2;
-
-    size_t in_pos = 256 * sizeof(uint32_t);
-    HuffmanNode *node = root;
-    size_t out_pos = 0;
-
-    while (in_pos < length_pos) {
-        uint8_t byte = input[in_pos++];
-        for (int bit_index = 7; bit_index >= 0; --bit_index) {
-            int bit = (byte >> bit_index) & 1;
-            node = bit == 0 ? node->left : node->right;
-
-            if (!node->left && !node->right) {
-                output[out_pos++] = node->value;
-                node = root;
-                if (out_pos == original_size) break;
-            }
-        }
-        if (out_pos == original_size) break;
+    MinHeap heap = { .data = (Node**)malloc(BYTE_RANGE * sizeof(Node*)), .size = 0 };
+    for (int i = 0; i < BYTE_RANGE; i++) {
+        if (freq[i]) heap_insert(&heap, new_node(i, freq[i], NULL, NULL));
     }
 
+    while (heap.size > 1) {
+        Node* l = heap_extract(&heap);
+        Node* r = heap_extract(&heap);
+        heap_insert(&heap, new_node(-1, l->freq + r->freq, l, r));
+    }
+
+    Node* root = heap_extract(&heap);
+    FILE* out = fopen(output_file, "wb");
+    if (!out) { perror("fopen"); return; }
+
+    clock_t start = clock();
+
+    Node* node = root;
+    uint8_t byte;
+    uint32_t written = 0;
+    while (fread(&byte, 1, 1, in) && written < original_size) {
+        for (int b = 7; b >= 0 && written < original_size; b--) {
+            int bit = (byte >> b) & 1;
+            node = bit ? node->right : node->left;
+            if (!node->left && !node->right) {
+                fputc(node->byte, out);
+                node = root;
+                written++;
+            }
+        }
+    }
+
+    clock_t end = clock();
+    printf("%s Huffman CPU decompress time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+
     free_tree(root);
-    *output_size = out_pos;
-    return 0;
+
+    fclose(in);
+    fclose(out);
 }
