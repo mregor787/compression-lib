@@ -43,13 +43,13 @@ int compress_data(const char* input_file, const char* output_file,
                 huffman_compress_cuda(input_file, output_file);
             break;
         
-        //case ALGO_BWT_RLE_HUFFMAN:
-        //    compress_bwt_rle_huffman(input_file, output_file, mode);
+        case ALGO_BWT_RLE_HUFFMAN:
+            compress_bwt_rle_huffman(input_file, output_file, mode);
 
         default:
-            return -2; // неподдерживаемый алгоритм
+            return -2;
     }
-    return -3; // неподдерживаемый режим
+    return -3;
 }
 
 int decompress_data(const char* input_file, const char* output_file,
@@ -89,8 +89,8 @@ int decompress_data(const char* input_file, const char* output_file,
                 huffman_decompress_cpu(input_file, output_file);
             break;
         
-        //case ALGO_BWT_RLE_HUFFMAN:
-        //    decompress_bwt_rle_huffman(input_file, output_file, mode);
+        case ALGO_BWT_RLE_HUFFMAN:
+            decompress_bwt_rle_huffman(input_file, output_file, mode);
 
         default:
             return -2;

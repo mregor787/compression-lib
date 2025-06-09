@@ -36,7 +36,7 @@ void rle_compress_cpu(const char* input_file, const char* output_file)
     }
 
     clock_t end = clock();
-    printf("%s CPU compression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+    printf("%s RLE CPU compression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
 
     FILE* out = fopen(output_file, "wb");
     if (!out) {

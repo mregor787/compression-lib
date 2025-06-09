@@ -9,13 +9,9 @@
 extern "C" {
 #endif
 
-int compress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
-                             uint8_t *output, size_t *output_size,
-                             ExecutionMode mode);
+void compress_bwt_rle_huffman(const char* input_file, const char* output_file, ExecutionMode mode);
 
-int decompress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
-                               uint8_t *output, size_t *output_size,
-                               ExecutionMode mode);
+void decompress_bwt_rle_huffman(const char* input_file, const char* output_file, ExecutionMode mode);
 
 #ifdef __cplusplus
 }

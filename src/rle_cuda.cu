@@ -83,7 +83,7 @@ void rle_compress_cuda(const char* input_file, const char* output_file)
     cudaDeviceSynchronize();
 
     clock_t end = clock();
-    printf("%s GPU compression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+    printf("%s RLE GPU compression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
 
     FILE* out = fopen(output_file, "wb");
     if (!out) {

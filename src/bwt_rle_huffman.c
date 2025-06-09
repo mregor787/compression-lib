@@ -2,119 +2,63 @@
 #include "rle.h"
 #include "huffman.h"
 #include "compression.h"
-#include <stdlib.h>
-#include <string.h>
 
-#define MAX_SIZE (10 * 1024 * 1024)
-/*
-int compress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
-                              uint8_t *output, size_t *output_size,
-                              ExecutionMode mode) {
-    if (!input || !output || !output_size) return -1;
+void compress_bwt_rle_huffman(const char* input_file, const char* output_file, ExecutionMode mode) {
+    const char* temp_bwt = "temp_bwt.bin";
+    const char* temp_rle = "temp_rle.bin";
 
-    // Этап 1: BWT
-    uint8_t *bwt_out = (uint8_t *)malloc(input_size);
-    if (!bwt_out) return -10;
+    clock_t global_start = clock();
 
-    size_t primary_index = 0;
-    int bwt_res = (mode == MODE_CUDA)
-        ? bwt_transform_cuda(input, input_size, bwt_out, &primary_index)
-        : bwt_transform_cpu(input, input_size, bwt_out, &primary_index);
-
-    if (bwt_res != 0) {
-        free(bwt_out);
-        return -2;
+    if (mode == MODE_CPU) {
+        printf("[MODE] CPU: BWT -> RLE -> Huffman\n");
+        bwt_transform_cpu(input_file, temp_bwt);
+        rle_compress_cpu(temp_bwt, temp_rle);
+    } else if (mode == MODE_CUDA) {
+        printf("[MODE] CUDA: BWT (GPU) -> RLE (GPU) -> Huffman (CPU)\n");
+        bwt_transform_cuda(input_file, temp_bwt);
+        rle_compress_cuda(temp_bwt, temp_rle);
+    } else {
+        fprintf(stderr, "Unknown execution mode\n");
+        return;
     }
 
-    // Этап 2: RLE
-    uint8_t *rle_out = (uint8_t *)malloc(input_size * 2); // worst case
-    if (!rle_out) {
-        free(bwt_out);
-        return -10;
-    }
+    huffman_compress_cpu(temp_rle, output_file);
 
-    size_t rle_size = 0;
-    int rle_res = (mode == MODE_CUDA)
-        ? rle_compress_cuda(bwt_out, input_size, rle_out, &rle_size)
-        : rle_compress_cpu(bwt_out, input_size, rle_out, &rle_size);
+    clock_t global_end = clock();
+    double elapsed_ms = 1000.0 * (global_end - global_start) / CLOCKS_PER_SEC;
+    printf("%s BWT+RLE+Huffman %s total time: %.2f ms\n", input_file,
+           mode == MODE_CPU ? "CPU" : "CUDA", elapsed_ms);
 
-    free(bwt_out);
-    if (rle_res != 0) {
-        free(rle_out);
-        return -3;
-    }
-
-    // Этап 3: Huffman
-    uint8_t *prepended = (uint8_t *)malloc(rle_size + 4);
-    if (!prepended) {
-        free(rle_out);
-        return -10;
-    }
-
-    // Сохраняем индекс BWT (4 байта)
-    prepended[0] = (uint8_t)(primary_index & 0xFF);
-    prepended[1] = (uint8_t)((primary_index >> 8) & 0xFF);
-    prepended[2] = (uint8_t)((primary_index >> 16) & 0xFF);
-    prepended[3] = (uint8_t)((primary_index >> 24) & 0xFF);
-    memcpy(prepended + 4, rle_out, rle_size);
-    free(rle_out);
-
-    int res = huffman_compress_cpu(prepended, rle_size + 4, output, output_size);
-    free(prepended);
-    return res;
+    remove(temp_bwt);
+    remove(temp_rle);
 }
 
-int decompress_bwt_rle_huffman(const uint8_t *input, size_t input_size,
-                                uint8_t *output, size_t *output_size,
-                                ExecutionMode mode) {
-    if (!input || !output || !output_size) return -1;
+void decompress_bwt_rle_huffman(const char* input_file, const char* output_file, ExecutionMode mode) {
+    const char* temp_rle = "temp_rle_d.bin";
+    const char* temp_bwt = "temp_bwt_d.bin";
 
-    // Этап 1: Huffman
-    uint8_t *huffman_out = (uint8_t *)malloc(MAX_SIZE);
-    if (!huffman_out) return -10;
+    clock_t global_start = clock();
 
-    size_t huffman_size = MAX_SIZE;
-    int res1 = huffman_decompress_cpu(input, input_size, huffman_out, &huffman_size);
-    if (res1 != 0) {
-        free(huffman_out);
-        return -2;
+    printf("[MODE] %s: Huffman -> RLE -> BWT\n", mode == MODE_CPU ? "CPU" : "CUDA");
+
+    huffman_decompress_cpu(input_file, temp_rle);
+
+    if (mode == MODE_CPU) {
+        rle_decompress_cpu(temp_rle, temp_bwt);
+        bwt_inverse_cpu(temp_bwt, output_file);
+    } else if (mode == MODE_CUDA) {
+        rle_decompress_cuda(temp_rle, temp_bwt);
+        bwt_inverse_cuda(temp_bwt, output_file);
+    } else {
+        fprintf(stderr, "Unknown execution mode\n");
+        return;
     }
 
-    // Извлекаем индекс BWT (4 байта)
-    size_t primary_index = 0;
-    primary_index |= huffman_out[0];
-    primary_index |= ((int)huffman_out[1]) << 8;
-    primary_index |= ((int)huffman_out[2]) << 16;
-    primary_index |= ((int)huffman_out[3]) << 24;
+    clock_t global_end = clock();
+    double elapsed_ms = 1000.0 * (global_end - global_start) / CLOCKS_PER_SEC;
+    printf("%s Huffman+RLE+BWT %s total time: %.2f ms\n", input_file,
+           mode == MODE_CPU ? "CPU" : "CUDA", elapsed_ms);
 
-    // Этап 2: RLE
-    uint8_t *rle_input = huffman_out + 4;
-    size_t rle_input_size = huffman_size - 4;
-
-    uint8_t *rle_out = (uint8_t *)malloc(MAX_SIZE);
-    if (!rle_out) {
-        free(huffman_out);
-        return -10;
-    }
-
-    size_t rle_out_size = MAX_SIZE;
-    int rle_res = (mode == MODE_CUDA)
-        ? rle_decompress_cuda(rle_input, rle_input_size, rle_out, &rle_out_size)
-        : rle_decompress_cpu(rle_input, rle_input_size, rle_out, &rle_out_size);
-
-    free(huffman_out);
-    if (rle_res != 0) {
-        free(rle_out);
-        return -3;
-    }
-
-    // Этап 3: BWT
-    int res = (mode == MODE_CUDA)
-        ? bwt_inverse_cuda(rle_out, rle_out_size, output, primary_index)
-        : bwt_inverse_cpu(rle_out, rle_out_size, output, primary_index);
-
-    *output_size = rle_out_size;
-    free(rle_out);
-    return res;
+    remove(temp_rle);
+    remove(temp_bwt);
 }
-*/
