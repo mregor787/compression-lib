@@ -3,24 +3,26 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // CPU
-int bwt_transform_cpu(const uint8_t *input, size_t input_size,
-                      uint8_t *output, size_t *primary_index);
+void build_suffix_array(const char *s, int n, int *sa);
 
-int bwt_inverse_cpu(const uint8_t *input, size_t input_size,
-                    uint8_t *output, size_t primary_index);
+void bwt_transform_cpu(const char *input_file, const char *output_file);
+
+void bwt_inverse_cpu(const char *input_file, const char *output_file);
  
 // CUDA
-int bwt_transform_cuda(const uint8_t *input, size_t n,
-                       uint8_t *output, size_t *primary_index);
+void bwt_transform_cuda(const char *input_file, const char *output_file);
 
-int bwt_inverse_cuda(const uint8_t *input, size_t n,
-                     uint8_t *output, size_t primary_index);
+void bwt_inverse_cuda(const char *input_file, const char *output_file);
 
 
 #ifdef __cplusplus

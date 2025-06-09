@@ -1,18 +1,19 @@
 #ifndef LZ77_H
 #define LZ77_H
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int lz77_compress_cpu(const uint8_t *input, size_t input_size,
-                      uint8_t *output, size_t *output_size);
+void lz77_compress_cpu(const char* input_file, const char* output_file);
 
-int lz77_decompress_cpu(const uint8_t *input, size_t input_size,
-                        uint8_t *output, size_t *output_size);
+void lz77_decompress_cpu(const char* input_file, const char* output_file);
 
 #ifdef __cplusplus
 }

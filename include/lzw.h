@@ -3,16 +3,18 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int lzw_compress_cpu(const uint8_t *input, size_t input_size,
-                     uint8_t *output, size_t *output_size);
+void lzw_compress_cpu(const char* input_file, const char* output_file);
 
-int lzw_decompress_cpu(const uint8_t *input, size_t input_size,
-                       uint8_t *output, size_t *output_size);
+void lzw_decompress_cpu(const char* input_file, const char* output_file);
 
 #ifdef __cplusplus
 }

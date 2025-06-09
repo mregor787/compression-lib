@@ -18,7 +18,7 @@ int compress_data(const char* input_file, const char* output_file,
             else if (mode == MODE_CUDA)
                 rle_compress_cuda(input_file, output_file);
             break;
-/*        
+        
         case ALGO_LZ77:
             if (mode == MODE_CPU)
                 lz77_compress_cpu(input_file, output_file);
@@ -28,7 +28,14 @@ int compress_data(const char* input_file, const char* output_file,
             if (mode == MODE_CPU)
                 lzw_compress_cpu(input_file, output_file);
             break;
-        
+
+        case ALGO_BWT:
+            if (mode == MODE_CPU)
+                bwt_transform_cpu(input_file, output_file);
+            else if (mode == MODE_CUDA)
+                bwt_transform_cuda(input_file, output_file);
+            break;
+           /*
         case ALGO_HUFFMAN:
             if (mode == MODE_CPU)
                 huffman_compress_cpu(input_file, output_file);
@@ -57,7 +64,7 @@ int decompress_data(const char* input_file, const char* output_file,
             else if (mode == MODE_CUDA)
                 rle_decompress_cuda(input_file, output_file);
             break;
-/*
+
         case ALGO_LZ77:
             if (mode == MODE_CPU)
                 lz77_decompress_cpu(input_file, output_file);
@@ -67,7 +74,14 @@ int decompress_data(const char* input_file, const char* output_file,
             if (mode == MODE_CPU)
                 lzw_decompress_cpu(input_file, output_file);
             break;
-
+        
+        case ALGO_BWT:
+            if (mode == MODE_CPU)
+                bwt_inverse_cpu(input_file, output_file);
+            else if (mode == MODE_CUDA)
+                bwt_inverse_cuda(input_file, output_file);
+            break;
+/*
         case ALGO_HUFFMAN:
             if (mode == MODE_CPU)
                 huffman_decompress_cpu(input_file, output_file);

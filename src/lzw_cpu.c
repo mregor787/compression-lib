@@ -1,138 +1,142 @@
-#include "lzw.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <lzw.h>
 
 #define MAX_DICT_SIZE 4096
-
-// ==== Общая структура словаря ====
 
 typedef struct {
     char **entries;
     int size;
-    int capacity;
 } Dict;
 
-static Dict *dict_create(int capacity) {
-    Dict *d = (Dict *)malloc(sizeof(Dict));
-    d->entries = (char **)malloc(sizeof(char *) * capacity);
-    d->size = 256;
-    d->capacity = capacity;
+static Dict *dict_create() {
+    Dict *dict = (Dict *)malloc(sizeof(Dict));
+    dict->entries = (char **)malloc(sizeof(char *) * MAX_DICT_SIZE);
+    dict->size = 256;
     for (int i = 0; i < 256; ++i) {
-        d->entries[i] = (char *)malloc(2);
-        d->entries[i][0] = (char)i;
-        d->entries[i][1] = '\0';
+        dict->entries[i] = (char *)malloc(2);
+        dict->entries[i][0] = (char)i;
+        dict->entries[i][1] = '\0';
     }
-    return d;
+    return dict;
 }
 
-static void dict_add(Dict *d, const char *str) {
-    if (d->size >= d->capacity) return;
-    d->entries[d->size++] = strdup(str);
+static void dict_free(Dict *dict) {
+    for (int i = 0; i < dict->size; ++i) {
+        free(dict->entries[i]);
+    }
+    free(dict->entries);
+    free(dict);
 }
 
-static int dict_find(Dict *d, const char *str) {
-    for (int i = 0; i < d->size; ++i) {
-        if (strcmp(d->entries[i], str) == 0)
+static int dict_find(Dict *dict, const char *str) {
+    for (int i = 0; i < dict->size; ++i) {
+        if (strcmp(dict->entries[i], str) == 0)
             return i;
     }
     return -1;
 }
 
-static void dict_free(Dict *d) {
-    for (int i = 0; i < d->size; ++i)
-        free(d->entries[i]);
-    free(d->entries);
-    free(d);
+static void dict_add(Dict *dict, const char *str) {
+    if (dict->size >= MAX_DICT_SIZE) return;
+    dict->entries[dict->size++] = strdup(str);
 }
 
-// ==== Сжатие ====
+void lzw_compress_cpu(const char *input_file, const char *output_file) {
+    FILE *in = fopen(input_file, "rb");
+    if (!in) {
+        perror("fopen input");
+        return;
+    }
 
-int lzw_compress_cpu(const uint8_t *input, size_t input_size,
-                     uint8_t *output, size_t *output_size) {
-    if (!input || !output || !output_size) return -1;
+    fseek(in, 0, SEEK_END);
+    long input_size = ftell(in);
+    fseek(in, 0, SEEK_SET);
 
-    Dict *dict = dict_create(MAX_DICT_SIZE);
-    char buffer[512] = {0};
+    char *input_data = (char *)malloc(input_size);
+    fread(input_data, 1, input_size, in);
+    fclose(in);
 
-    size_t in_pos = 0, out_pos = 0;
-    size_t buf_len = 1;
-    buffer[0] = input[in_pos++];
+    clock_t start = clock();
 
-    while (in_pos <= input_size) {
-        buffer[buf_len] = input[in_pos];
-        buffer[buf_len + 1] = '\0';
-        int idx = dict_find(dict, buffer);
-        if (idx != -1 && in_pos < input_size) {
-            buf_len++;
-            in_pos++;
+    Dict *dict = dict_create();
+    char current[1024] = "";
+    FILE *out = fopen(output_file, "wb");
+
+    for (long i = 0; i < input_size; ++i) {
+        char c = input_data[i];
+        char next[1024];
+        snprintf(next, sizeof(next), "%s%c", current, c);
+
+        if (dict_find(dict, next) != -1) {
+            strcpy(current, next);
         } else {
-            buffer[buf_len] = '\0';
-            int code = dict_find(dict, buffer);
-            output[out_pos++] = code & 0xFF;
-            output[out_pos++] = (code >> 8) & 0xFF;
+            int index = dict_find(dict, current);
+            fwrite(&index, sizeof(short), 1, out);
+            dict_add(dict, next);
+            current[0] = c;
+            current[1] = '\0';
+        }
+    }
 
-            if (in_pos < input_size) {
-                buffer[buf_len] = input[in_pos];
-                buffer[buf_len + 1] = '\0';
-                dict_add(dict, buffer);
-                buf_len = 1;
-                buffer[0] = input[in_pos++];
-            } else {
-                break;
+    if (strlen(current) > 0) {
+        int index = dict_find(dict, current);
+        fwrite(&index, sizeof(short), 1, out);
+    }
+
+    fclose(out);
+    dict_free(dict);
+    clock_t end = clock();
+    printf("%s LZW CPU compression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+
+    free(input_data);
+}
+
+void lzw_decompress_cpu(const char *input_file, const char *output_file) {
+    FILE *in = fopen(input_file, "rb");
+    if (!in) {
+        perror("fopen input");
+        return;
+    }
+
+    fseek(in, 0, SEEK_END);
+    long input_size = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    int code_count = input_size / sizeof(short);
+
+    short *codes = (short *)malloc(input_size);
+    fread(codes, sizeof(short), code_count, in);
+    fclose(in);
+
+    clock_t start = clock();
+
+    Dict *dict = dict_create();
+    FILE *out = fopen(output_file, "wb");
+
+    char prev[1024] = "";
+    for (int i = 0; i < code_count; ++i) {
+        short code = codes[i];
+        if (code < dict->size) {
+            char *entry = dict->entries[code];
+            fwrite(entry, 1, strlen(entry), out);
+
+            if (i > 0) {
+                char new_entry[1024];
+                snprintf(new_entry, sizeof(new_entry), "%s%c", prev, entry[0]);
+                dict_add(dict, new_entry);
             }
-        }
-    }
-
-    *output_size = out_pos;
-    dict_free(dict);
-    return 0;
-}
-
-// ==== Распаковка ====
-
-int lzw_decompress_cpu(const uint8_t *input, size_t input_size,
-                       uint8_t *output, size_t *output_size) {
-    if (!input || !output || !output_size || input_size % 2 != 0) return -1;
-
-    Dict *dict = dict_create(MAX_DICT_SIZE);
-    char temp[1024] = {0};
-
-    size_t in_pos = 0, out_pos = 0;
-    uint16_t prev_code = input[in_pos] | (input[in_pos + 1] << 8);
-    strcpy(temp, dict->entries[prev_code]);
-    size_t len = strlen(temp);
-    memcpy(output + out_pos, temp, len);
-    out_pos += len;
-    in_pos += 2;
-
-    while (in_pos + 1 < input_size) {
-        uint16_t curr_code = input[in_pos] | (input[in_pos + 1] << 8);
-        in_pos += 2;
-
-        const char *entry = NULL;
-        if (curr_code < dict->size) {
-            entry = dict->entries[curr_code];
-        } else if (curr_code == dict->size) {
-            snprintf(temp, sizeof(temp), "%s%c", dict->entries[prev_code], dict->entries[prev_code][0]);
-            entry = temp;
+            strcpy(prev, entry);
         } else {
-            dict_free(dict);
-            return -2;
+            char new_entry[1024];
+            snprintf(new_entry, sizeof(new_entry), "%s%c", prev, prev[0]);
+            fwrite(new_entry, 1, strlen(new_entry), out);
+            dict_add(dict, new_entry);
+            strcpy(prev, new_entry);
         }
-
-        size_t entry_len = strlen(entry);
-        memcpy(output + out_pos, entry, entry_len);
-        out_pos += entry_len;
-
-        snprintf(temp, sizeof(temp), "%s%c", dict->entries[prev_code], entry[0]);
-        dict_add(dict, temp);
-        prev_code = curr_code;
     }
 
-    *output_size = out_pos;
+    fclose(out);
     dict_free(dict);
-    return 0;
+    clock_t end = clock();
+    printf("%s LZW CPU decompression time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+
+    free(codes);
 }

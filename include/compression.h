@@ -8,6 +8,7 @@ typedef enum {
     ALGO_RLE,
     ALGO_LZ77,
     ALGO_LZW,
+    ALGO_BWT,
     ALGO_HUFFMAN,
     ALGO_BWT_RLE_HUFFMAN
 } CompressionAlgo;

@@ -1,81 +1,163 @@
-#include "bwt.h"
-#include <stdlib.h>
-#include <string.h>
+#include <bwt.h>
 
-typedef struct {
-    size_t index;
-    const uint8_t *text;
-    size_t size;
-} Rotation;
-
-static int compare_rotations(const void *a, const void *b) {
-    const Rotation *ra = (const Rotation *)a;
-    const Rotation *rb = (const Rotation *)b;
-
-    for (size_t i = 0; i < ra->size; ++i) {
-        uint8_t ca = ra->text[(ra->index + i) % ra->size];
-        uint8_t cb = rb->text[(rb->index + i) % rb->size];
-        if (ca != cb)
-            return (int)ca - (int)cb;
-    }
-    return 0;
+static void radix_pass(int *a, int *b, int *r, int n, int K) {
+    int *cnt = (int *)calloc(K + 1, sizeof(int));
+    for (int i = 0; i < n; i++) cnt[r[a[i]]]++;
+    for (int i = 1; i <= K; i++) cnt[i] += cnt[i - 1];
+    for (int i = n - 1; i >= 0; i--) b[--cnt[r[a[i]]]] = a[i];
+    free(cnt);
 }
 
-int bwt_transform_cpu(const uint8_t *input, size_t input_size,
-                      uint8_t *output, size_t *primary_index) {
-    if (!input || !output || !primary_index || input_size == 0)
-        return -1;
+void build_suffix_array(const char *s, int n, int *sa) {
+    int *rank = (int *)malloc(n * sizeof(int));
+    int *temp = (int *)malloc(n * sizeof(int));
+    int *sa2 = (int *)malloc(n * sizeof(int));
 
-    Rotation *rotations = malloc(input_size * sizeof(Rotation));
-    if (!rotations) return -2;
-
-    for (size_t i = 0; i < input_size; ++i) {
-        rotations[i].index = i;
-        rotations[i].text = input;
-        rotations[i].size = input_size;
+    for (int i = 0; i < n; i++) {
+        sa[i] = i;
+        rank[i] = (unsigned char)s[i];
     }
 
-    qsort(rotations, input_size, sizeof(Rotation), compare_rotations);
-
-    for (size_t i = 0; i < input_size; ++i) {
-        size_t idx = (rotations[i].index + input_size - 1) % input_size;
-        output[i] = input[idx];
-        if (rotations[i].index == 0)
-            *primary_index = i;
+    for (int k = 1; k < n; k <<= 1) {
+        for (int i = 0; i < n; i++)
+            temp[i] = (i + k < n) ? rank[i + k] + 1 : 0;
+        radix_pass(sa, sa2, temp, n, n + 1);
+        for (int i = 0; i < n; i++)
+            temp[i] = rank[i] + 1;
+        radix_pass(sa2, sa, temp, n, n + 1);
+        temp[sa[0]] = 0;
+        for (int i = 1; i < n; i++) {
+            int prev = sa[i - 1], curr = sa[i];
+            int same = rank[prev] == rank[curr] &&
+                       ((prev + k < n && curr + k < n) ?
+                        rank[prev + k] == rank[curr + k] :
+                        (prev + k >= n && curr + k >= n));
+            temp[curr] = temp[prev] + !same;
+        }
+        memcpy(rank, temp, n * sizeof(int));
+        if (rank[sa[n - 1]] == n - 1) break;
     }
 
-    free(rotations);
-    return 0;
+    free(rank);
+    free(temp);
+    free(sa2);
 }
 
-int bwt_inverse_cpu(const uint8_t *input, size_t input_size,
-                    uint8_t *output, size_t primary_index) {
-    if (!input || !output || input_size == 0 || primary_index >= input_size)
-        return -1;
+void bwt_transform_cpu(const char *input_file, const char *output_file) {
+    FILE *f = fopen(input_file, "rb");
+    if (!f) { perror("fopen"); return; }
 
-    int counts[256] = {0};
-    int totals[256] = {0};
-    int *next = malloc(input_size * sizeof(int));
-    if (!next) return -2;
+    fseek(f, 0, SEEK_END);
+    int n0 = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-    for (size_t i = 0; i < input_size; ++i)
-        counts[input[i]]++;
+    char *s = (char *)malloc(n0);
+    fread(s, 1, n0, f);
+    fclose(f);
 
+    unsigned char used[256] = {0};
+    for (int i = 0; i < n0; i++) used[(unsigned char)s[i]] = 1;
+    unsigned char sentinel = 0;
+    while (used[sentinel] && sentinel < 255) sentinel++;
+    if (used[sentinel]) {
+        fprintf(stderr, "Cannot find unique terminator byte\n");
+        exit(1);
+    }
+
+    int n = n0 + 1;
+    char *s_term = (char *)malloc(n);
+    memcpy(s_term, s, n0);
+    s_term[n0] = sentinel;
+
+    clock_t start = clock();
+
+    int *sa = (int *)malloc(n * sizeof(int));
+    build_suffix_array(s_term, n, sa);
+
+    char *bwt = (char *)malloc(n);
+    int primary_index = 0;
+    for (int i = 0; i < n; ++i) {
+        if (sa[i] == 0) {
+            bwt[i] = s_term[n - 1];
+            primary_index = i;
+        } else {
+            bwt[i] = s_term[sa[i] - 1];
+        }
+    }
+
+    clock_t end = clock();
+    printf("%s BWT CPU transform time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+
+    FILE *out = fopen(output_file, "wb");
+    fwrite(&primary_index, sizeof(int), 1, out);
+    fwrite(&sentinel, sizeof(unsigned char), 1, out);
+    fwrite(bwt, 1, n, out);
+    fclose(out);
+
+    free(s);
+    free(s_term);
+    free(bwt);
+    free(sa);
+}
+
+void bwt_inverse_cpu(const char *input_file, const char *output_file) {
+    FILE *f = fopen(input_file, "rb");
+    if (!f) { perror("fopen"); return; }
+
+    fseek(f, 0, SEEK_END);
+    int n = ftell(f) - sizeof(int) - sizeof(unsigned char);
+    fseek(f, 0, SEEK_SET);
+
+    int primary_index;
+    unsigned char sentinel;
+    fread(&primary_index, sizeof(int), 1, f);
+    fread(&sentinel, sizeof(unsigned char), 1, f);
+
+    char *last_col = (char *)malloc(n);
+    fread(last_col, 1, n, f);
+    fclose(f);
+
+    clock_t start = clock();
+
+    int count[256] = {0};
+    for (int i = 0; i < n; ++i)
+        count[(unsigned char)last_col[i]]++;
+
+    int total[256];
     int sum = 0;
     for (int i = 0; i < 256; ++i) {
-        totals[i] = sum;
-        sum += counts[i];
+        total[i] = sum;
+        sum += count[i];
     }
 
-    for (size_t i = 0; i < input_size; ++i)
-        next[i] = totals[input[i]]++;
+    int temp[256];
+    memcpy(temp, total, sizeof(total));
 
-    size_t pos = primary_index;
-    for (size_t i = 0; i < input_size; ++i) {
-        output[input_size - i - 1] = input[pos];
-        pos = next[pos];
+    int *next = (int *)malloc(sizeof(int) * n);
+    for (int i = 0; i < n; ++i) {
+        int c = (unsigned char)last_col[i];
+        next[temp[c]++] = i;
     }
 
+    char *output = (char *)malloc(n);
+    int idx = primary_index;
+    for (int i = 0; i < n; ++i) {
+        output[i] = last_col[idx];
+        idx = next[idx];
+    }
+
+    clock_t end = clock();
+    printf("%s BWT CPU inverse time: %.2f ms\n", input_file, 1000.0 * (end - start) / CLOCKS_PER_SEC);
+
+    // Убираем sentinel
+    FILE *out = fopen(output_file, "wb");
+    for (int i = 0; i < n; ++i) {
+        if ((unsigned char)output[i] != sentinel)
+            fwrite(&output[i], 1, 1, out);
+    }
+    fclose(out);
+
+    free(last_col);
+    free(output);
     free(next);
-    return 0;
 }

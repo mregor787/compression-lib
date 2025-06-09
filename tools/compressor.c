@@ -12,7 +12,7 @@ void print_help(const char *prog) {
     printf("Usage:\n");
     printf("  %s [OPTIONS]\n\n", prog);
     printf("Options:\n");
-    printf("  --algo <name>        Compression algorithm [rle | lz77 | lzw | huffman | bwt-rle-huffman] (default: rle)\n");
+    printf("  --algo <name>        Compression algorithm [rle | lz77 | lzw | bwt | huffman | bwt-rle-huffman] (default: rle)\n");
     printf("  --mode <type>        Execution mode [cpu | cuda] (default: cpu)\n");
     printf("  --compress           Perform compression (default if --decompress is not specified)\n");
     printf("  --decompress         Perform decompression (overrides --compress)\n");
@@ -29,6 +29,7 @@ int parse_algo(const char *str) {
     if (strcmp(str, "rle") == 0) return ALGO_RLE;
     if (strcmp(str, "lz77") == 0) return ALGO_LZ77;
     if (strcmp(str, "lzw") == 0) return ALGO_LZW;
+    if (strcmp(str, "bwt") == 0) return ALGO_BWT;
     if (strcmp(str, "huffman") == 0) return ALGO_HUFFMAN;
     if (strcmp(str, "bwt-rle-huffman") == 0) return ALGO_BWT_RLE_HUFFMAN;
     return -1;
@@ -147,23 +148,21 @@ int main(int argc, char **argv) {
     ExecutionMode mode = (ExecutionMode)mode_val;
 
     if (benchmark) {
-        const char* input = "data/test.txt";
-        const char* output = "data/output.bin";
-        const char* restored = "data/restored.txt";
+        const char* restored_file = "data/restored.txt";
 
-        compress_data(input, output, algo, mode);
-        decompress_data(output, restored, algo, mode);
+        compress_data(input_file, output_file, algo, mode);
+        decompress_data(output_file, restored_file, algo, mode);
 
-        size_t original_size = get_file_size(input);
-        size_t compressed_size = get_file_size(output);
-        size_t restored_size = get_file_size(restored);
+        size_t original_size = get_file_size(input_file);
+        size_t compressed_size = get_file_size(output_file);
+        size_t restored_size = get_file_size(restored_file);
 
-        int match = files_are_equal(input, restored);
+        int match = files_are_equal(input_file, restored_file);
 
         print_report_header(algo_str);
-        printf("Original file:    %s (%zu bytes)\n", input, original_size);
-        printf("Compressed file:  %s (%zu bytes)\n", output, compressed_size);
-        printf("Restored file:    %s (%zu bytes)\n", restored, restored_size);
+        printf("Original file:    %s (%zu bytes)\n", input_file, original_size);
+        printf("Compressed file:  %s (%zu bytes)\n", output_file, compressed_size);
+        printf("Restored file:    %s (%zu bytes)\n", restored_file, restored_size);
         printf("Compression ratio: %.2fx\n", compressed_size ? (double)original_size / compressed_size : 0.0);
         printf("Restored file matches original: %s\n", match ? "YES" : "NO");
         return 0;
